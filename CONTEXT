@@ -1,0 +1,202 @@
+# Ryder's Homework Tracker — Project Context
+
+> Paste this into a fresh Claude session to resume work on this project. Last updated: 27 May 2026.
+
+## What this is
+
+A PWA (Progressive Web App) Sean built for his son Ryder to track his dyslexia homework. Ryder needs to do 20 minutes of homework on 5 of any 7 days, working toward a goal date of **31 March 2027**. The app lives on Ryder's iPad and laptop as a webapp and motivates him via streak tracking with real-world prizes.
+
+## Live URLs
+
+- **App:** https://thetransformationfoundry.github.io/ryder-homework/
+- **GitHub repo:** https://github.com/thetransformationfoundry/ryder-homework (public)
+- **Cloudflare Worker:** https://ryder-sync.zanmanna.workers.dev
+
+## Architecture
+
+```
+┌─────────────────┐         ┌──────────────────────┐         ┌─────────────────┐
+│  Ryder's iPad   │◀───────▶│  Cloudflare Worker   │◀───────▶│  Cloudflare KV  │
+│  (PWA)          │  HTTPS  │  ryder-sync          │         │  ryder-storage  │
+└─────────────────┘         └──────────────────────┘         └─────────────────┘
+        ▲                              ▲
+        │                              │
+┌─────────────────┐                    │
+│ Ryder's laptop  │────────────────────┘
+│  (PWA)          │
+└─────────────────┘
+
+Static files served from:
+GitHub Pages → https://thetransformationfoundry.github.io/ryder-homework/
+```
+
+**Stack:**
+- **Frontend:** Single `index.html` file. React 18 + Babel via CDN (no build step). Inline SVG icons (no lucide-react dependency). Styles inline.
+- **Hosting:** GitHub Pages from `main` branch root.
+- **Sync backend:** Cloudflare Worker (`worker.js`) + KV namespace `ryder-storage` bound as `RYDER_KV`.
+- **Auth:** Origin header check (no shared secret). Worker only accepts requests from `https://thetransformationfoundry.github.io`.
+- **Local storage:** `localStorage` key `ryder-homework-v1`. Always saves locally first, then debounced push (600ms) to Worker.
+- **PWA:** `manifest.json` + 4 PNG icons + Apple meta tags. Installs standalone with red "R" monogram icon.
+
+## Repo structure
+
+```
+ryder-homework/
+├── index.html        ← The whole app, ~600 lines
+├── manifest.json     ← PWA manifest (name, icons, theme)
+├── worker.js         ← Cloudflare Worker code (also stored here for reference, not served)
+├── README.md         ← Setup docs
+├── icon-512.png      ← App icon, 512x512
+├── icon-192.png      ← App icon, 192x192
+├── icon-180.png      ← Apple touch icon
+└── favicon.png       ← Browser tab icon
+```
+
+## Configuration values
+
+In `index.html`, near top of `<script type="text/babel">`:
+
+```js
+const CONFIG = {
+  SYNC_URL: "https://ryder-sync.zanmanna.workers.dev",
+  USER: "ryder",
+};
+
+const GOAL_DATE = new Date("2027-03-31T23:59:59");
+const DAILY_MINUTES = 20;
+const DAYS_REQUIRED_PER_WEEK = 5;
+const LOCAL_KEY = "ryder-homework-v1";
+```
+
+In `worker.js`, near the top:
+
+```js
+const ALLOWED_ORIGINS = [
+  "https://thetransformationfoundry.github.io",
+  "http://localhost:8080",
+  "http://localhost:3000",
+  "http://127.0.0.1:8080",
+];
+```
+
+## Streak logic (important — counter-intuitive)
+
+The streak number **goes up by 1 every day Ryder ticks**, growing the longer he goes. BUT the 5-of-7 rule still polices laziness:
+
+1. From his very first tick, every tick = streak +1.
+2. The first 7 days from his first tick are a **grace period** — no possible reset.
+3. After day 7, every day the system checks: "looking back 7 days from this day, are there at least 5 ticks?" If no → **streak resets to 0** at that point and starts counting again from the next tick.
+4. So he can skip up to 2 days in any 7-day window and the streak survives. Skip 3+ and it dies.
+
+This was changed from an earlier version where the streak *only* counted consecutive days the rolling window stayed at 5+. That version showed 0 even after his first tick, which killed motivation. New version was Sean's call — visible reward for every tick, while the rule still bites if abused.
+
+Code: `calcStreak()` in `index.html`, lines ~94–123.
+
+## Prize tiers
+
+| Streak / Date | Prize |
+|---|---|
+| 5 days | Choose: extra screen time + extra sweet + free chore day |
+| 20 days | Double pocket money + free chore day |
+| 60 days | Outing of his choice — up to €100 |
+| 31 March 2027 (goal date) | Gift of his choice |
+
+Code: `milestones` array in `App()` in `index.html`.
+
+## UI sections (top to bottom)
+
+1. **Header** — "RYDER'S MISSION / DYSLEXIA HOMEWORK" + sync status badge
+2. **Countdown** — hours remaining to 31 March 2027, ticks live every second
+3. **Mark Done button** — the big red "I DID MY 20 MINS ✓" / "DONE TODAY" toggle
+4. **Current Streak card** — red, animated flame, big number (says "1 DAY" / "2 DAYS" etc)
+5. **Next Prize panel** — shows the next reward tier, days remaining, red progress bar
+6. **Last 7 Days indicator** — small green/amber pill, "X/5 · STREAK SAFE ✓" or "X MORE THIS WEEK"
+7. **This Week strip** — Mon–Sun, red check marks for completed days
+8. **Locked-In Prizes list** — 4 cards (5/20/60/goal), turn red with UNLOCKED badge when reached
+9. **Monthly calendar** — full month with red blocks for completed days, navigable ‹ ›
+10. **Stats footer** — Total Days / Hours Done
+11. Tag line: "KEEP GOING RYDER · YOU GOT THIS"
+
+## Design system
+
+- **Colours:** `#dc2626` (red), `#0a0a0a` (near-black), `#fff` (white). Status accents: `#22c55e` green, `#f59e0b` amber.
+- **Fonts (via Google Fonts):**
+  - Display: `Bebas Neue` (big headers, numbers, labels)
+  - Body: `Inter` (small text, weights 600/800)
+  - Fallback: `Archivo Black` / `Impact`
+- **Borders/Shadows:** Heavy 3px borders, 6px hard offset shadows (no blur). Brutalist sporty arcade feel.
+- **No external icon library** — all icons inline SVG in an `Icon` object near top of script.
+
+## Sync behaviour
+
+- **On load:** read localStorage → fetch from Worker → merge (any `true` wins) → save merged to both.
+- **On every tick:** save localStorage immediately, debounced 600ms push to Worker.
+- **On tab focus:** re-fetch from Worker and merge (catches changes from other devices).
+- **If Worker unreachable:** badge shows OFFLINE, app keeps working locally, will sync when back online.
+- **Merge rule:** if either device has `completed[date] = true`, the merged result is `true`. Prevents accidental data loss.
+
+## Common edits and how to do them
+
+### Change a prize
+Edit the `milestones` array in `index.html`. Each entry has `label`, `prize` (description text), `Comp` (icon), `reached` (the condition).
+
+### Change the goal date
+Edit `GOAL_DATE` near top of script. ISO format.
+
+### Change the 5-days-per-week rule
+Edit `DAYS_REQUIRED_PER_WEEK`. The grace period (`dayNum > 7`) in `calcStreak()` may also want adjusting.
+
+### Add a "parent PIN" before ticking
+Wrap the `toggleToday` handler in a prompt(). Or add a state variable for "unlocked" mode that's set by a small lock icon in the corner.
+
+### Reset Ryder's data
+- Cloudflare dashboard → Workers → KV → `ryder-storage` → delete the `state:ryder` entry
+- Then in his browsers: open the app → DevTools console → `localStorage.removeItem('ryder-homework-v1')` → refresh
+
+### Move to a custom domain (e.g. ryder.zanmanna.com)
+1. Add CNAME file to repo pointing to GitHub Pages
+2. Configure DNS
+3. **Important:** add the new origin to `ALLOWED_ORIGINS` in `worker.js` and redeploy the Worker, otherwise sync will break with 403
+
+### Add another kid (e.g. for a sibling)
+Either:
+- Add a `USER` selector at app load (different URL params), keys are already namespaced as `state:<user>` in KV
+- Or fork the repo to a second Pages site with `USER: "sibling-name"`
+
+## How Sean works on this
+
+Sean is non-technical but very capable with no-code/low-code and Claude Code. His standard workflow:
+- Build conversationally with Claude in iterative sessions
+- Maintain `PROJECT.md` / `CONTEXT.md` files in repos as continuity documents (this file is one)
+- Manual paste/upload to deploy (no CI/CD set up for this project)
+- For changes: open the repo on GitHub, edit `index.html` in the web UI, commit, Pages auto-redeploys in ~1 min
+- For Worker changes: open Cloudflare dashboard → worker → Edit code → paste → Deploy
+
+## Known limitations / future ideas
+
+- **No "streak shield"** — one bad week kills the streak entirely. Could add a 1-per-month free pass.
+- **No retroactive ticking** — he can only mark today done, not catch up on yesterday. Easy add if needed.
+- **Single user** — designed for Ryder only. Multi-kid would need a user picker.
+- **No notifications** — no daily reminder push. Could add via Web Push API but complex.
+- **No parent oversight UI** — Sean can see the data via Cloudflare KV browser, but no nice parent view of "did Ryder tick honestly?". Could add a parent dashboard route.
+- **Honour system** — no enforcement that he actually did 20 minutes. Trust-based.
+- **No analytics / export** — could add a "download CSV" button for a year-end review.
+
+## Project history (chronological)
+
+1. Initial build: React artifact in Claude with countdown, streak, calendar, prize cards. Goal date 31 Dec 2026. Red/white/black sporty aesthetic.
+2. Iterated: goal date moved to 31 March 2027. Streak logic changed to 5-of-7 (forgive 2 days/week). Prizes locked in: 5/20/60 day streak prizes + ultimate goal prize.
+3. Converted from React artifact to standalone `index.html` for GitHub Pages.
+4. Added Cloudflare Worker + KV for cross-device sync.
+5. **Security fix:** removed broken API_KEY-in-public-HTML pattern, switched to Origin-header auth in Worker.
+6. Deployed to https://thetransformationfoundry.github.io/ryder-homework/. Cross-device sync confirmed working.
+7. **Streak UX fix:** changed streak counter from "consecutive 5-of-7-safe days" to "days ticked, breaks on rule violation" — so day 1 shows "1 DAY" not "0". Added Next Prize progress bar panel.
+8. Grammar tweak: "1 DAY" vs "X DAYS" properly singular/plural.
+
+## How to use this doc
+
+In a fresh Claude session, paste this whole file and say something like:
+
+> Here's the context for Ryder's Homework Tracker. I want to [change X]. Please show me what to edit.
+
+Claude will have everything it needs: architecture, the rules of the streak, the design system, the deploy process, and what's already been tried.
