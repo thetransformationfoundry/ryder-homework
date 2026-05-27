@@ -28,7 +28,7 @@ If you already have a worker deployed from the earlier version:
 
 1. Open your worker in the Cloudflare dashboard
 2. Replace the code with the new `worker.js`
-3. **Edit the `ALLOWED_ORIGINS` array** near the top to include your GitHub Pages URL (e.g. `"https://zanmanna.github.io"` — just the origin, no path)
+3. **Confirm the `ALLOWED_ORIGINS` array** near the top includes `"https://thetransformationfoundry.github.io"` (already set for you)
 4. Click **Deploy**
 5. Go to **Settings → Variables and Secrets** and **delete the `API_KEY` secret** — it's no longer used
 
@@ -36,7 +36,7 @@ If you're deploying fresh:
 
 1. Cloudflare dashboard → **Workers & Pages** → **Create** → **Create Worker**. Name it (e.g. `ryder-sync`)
 2. Paste the contents of `worker.js`
-3. Edit `ALLOWED_ORIGINS` to match your GitHub Pages URL
+3. Edit `ALLOWED_ORIGINS` to match your GitHub Pages URL (already set to TTF's)
 4. Deploy
 5. Create a KV namespace: **Storage & Databases → KV → Create namespace** called `ryder-storage`
 6. Bind it to the worker: **worker → Settings → Bindings → Add → KV namespace**. Variable name: `RYDER_KV`. Namespace: `ryder-storage`. Save.
@@ -59,9 +59,9 @@ Make sure `SYNC_URL` matches your Worker's URL (it should already be filled in c
 1. Create a public repo (e.g. `ryder-homework`)
 2. Upload all the files from this folder
 3. Settings → Pages → Source: Deploy from a branch → main → / (root) → Save
-4. Live at `https://YOURUSERNAME.github.io/<repo-name>/` after a minute
+4. Live at `https://thetransformationfoundry.github.io/ryder-homework/` after a minute
 
-**Important:** the URL where the app lives must match what's in `ALLOWED_ORIGINS` in the Worker. If your repo isn't on `https://zanmanna.github.io`, update that array and redeploy the worker.
+**Important:** the URL where the app lives must match what's in `ALLOWED_ORIGINS` in the Worker. Already configured for `thetransformationfoundry.github.io`.
 
 ## Install on Ryder's devices
 

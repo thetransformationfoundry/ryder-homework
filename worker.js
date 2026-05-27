@@ -18,7 +18,7 @@
 // EDIT THIS LIST: add your GitHub Pages origin (no path, no trailing slash).
 // You can keep "http://localhost" entries for testing.
 const ALLOWED_ORIGINS = [
-  "https://zanmanna.github.io",   // ← replace if your GitHub username is different
+  "https://thetransformationfoundry.github.io",
   "http://localhost:8080",
   "http://localhost:3000",
   "http://127.0.0.1:8080",
