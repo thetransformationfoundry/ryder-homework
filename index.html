@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Ryder's Homework</title>
+  <meta name="theme-color" content="#dc2626" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Ryder" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Bebas+Neue&family=Inter:wght@400;600;800&display=swap" rel="stylesheet" />
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #0a0a0a; }
+    body {
+      font-family: 'Archivo Black', 'Impact', sans-serif;
+      color: #fff;
+      min-height: 100vh;
+      min-height: 100dvh;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    @keyframes pop { 0% { transform: scale(0.5); opacity: 0; } 50% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+    @keyframes flame { 0%, 100% { transform: rotate(-3deg) scale(1); } 50% { transform: rotate(3deg) scale(1.08); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .pop { animation: pop 0.4s ease-out; }
+    .flame-anim { animation: flame 1.2s ease-in-out infinite; }
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid rgba(255,255,255,0.2);
+      border-top-color: #dc2626;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    button { font-family: inherit; }
+    button:active { transform: translate(2px, 2px); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" data-presets="react">
+    // =========================================================================
+    // CONFIG — only need to set SYNC_URL.
+    // Auth is handled by the Worker's Origin check, so no API key here.
+    // =========================================================================
+    const CONFIG = {
+      // The URL of your deployed Cloudflare Worker (no trailing slash).
+      // Leave as empty string to run in local-only mode.
+      SYNC_URL: "https://ryder-sync.zanmanna.workers.dev",
+      USER: "ryder",
+    };
+
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    const GOAL_DATE = new Date("2027-03-31T23:59:59");
+    const DAILY_MINUTES = 20;
+    const DAYS_REQUIRED_PER_WEEK = 5;
+    const LOCAL_KEY = "ryder-homework-v1";
+
+    const dateKey = (d) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+    const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+    const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+
+    const countInWindow = (completed, endDate) => {
+      let count = 0;
+      for (let i = 0; i < 7; i++) {
+        if (completed[dateKey(addDays(endDate, -i))]) count++;
+      }
+      return count;
+    };
+
+    const calcStreak = (completed) => {
+      let streak = 0;
+      let cursor = startOfDay(new Date());
+      while (true) {
+        if (countInWindow(completed, cursor) >= DAYS_REQUIRED_PER_WEEK) {
+          streak++;
+          cursor = addDays(cursor, -1);
+        } else break;
+        if (streak > 1000) break;
+      }
+      return streak;
+    };
+
+    const calcTotalDays = (completed) => Object.values(completed).filter(Boolean).length;
+
+    async function fetchRemote() {
+      if (!CONFIG.SYNC_URL) return null;
+      try {
+        const res = await fetch(`${CONFIG.SYNC_URL}/state?user=${CONFIG.USER}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        return data.completed || {};
+      } catch (e) {
+        console.warn("fetch remote failed", e);
+        return null;
+      }
+    }
+
+    async function pushRemote(completed) {
+      if (!CONFIG.SYNC_URL) return false;
+      try {
+        const res = await fetch(`${CONFIG.SYNC_URL}/state?user=${CONFIG.USER}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ completed }),
+        });
+        return res.ok;
+      } catch (e) {
+        console.warn("push remote failed", e);
+        return false;
+      }
+    }
+
+    function mergeStates(a, b) {
+      const out = { ...a };
+      for (const [k, v] of Object.entries(b || {})) {
+        if (v) out[k] = true;
+        else if (!(k in out)) out[k] = false;
+      }
+      return out;
+    }
+
+    const Icon = {
+      Flame: ({ size = 24, fill = "none", className = "" }) => (
+        <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+        </svg>
+      ),
+      Trophy: ({ size = 24, fill = "none" }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/>
+        </svg>
+      ),
+      Star: ({ size = 24, fill = "none" }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+        </svg>
+      ),
+      Crown: ({ size = 24, fill = "none" }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.735H5.81a1 1 0 0 1-.957-.735L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/>
+        </svg>
+      ),
+      Check: ({ size = 24 }) => (
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12"/>
+        </svg>
+      ),
+    };
+
+    function App() {
+      const [completed, setCompleted] = useState({});
+      const [now, setNow] = useState(new Date());
+      const [loaded, setLoaded] = useState(false);
+      const [celebrate, setCelebrate] = useState(null);
+      const [viewMonth, setViewMonth] = useState(startOfDay(new Date()));
+      const [syncState, setSyncState] = useState("idle");
+      const pushTimer = useRef(null);
+
+      useEffect(() => {
+        let local = {};
+        try {
+          const raw = localStorage.getItem(LOCAL_KEY);
+          if (raw) local = JSON.parse(raw);
+        } catch {}
+        setCompleted(local);
+        setLoaded(true);
+
+        if (!CONFIG.SYNC_URL) {
+          setSyncState("off");
+          return;
+        }
+        setSyncState("syncing");
+        fetchRemote().then((remote) => {
+          if (remote) {
+            const merged = mergeStates(local, remote);
+            setCompleted(merged);
+            try { localStorage.setItem(LOCAL_KEY, JSON.stringify(merged)); } catch {}
+            pushRemote(merged).then(() => setSyncState("ok"));
+          } else {
+            setSyncState("error");
+          }
+        });
+      }, []);
+
+      useEffect(() => {
+        if (!loaded) return;
+        try { localStorage.setItem(LOCAL_KEY, JSON.stringify(completed)); } catch {}
+        if (!CONFIG.SYNC_URL) return;
+        if (pushTimer.current) clearTimeout(pushTimer.current);
+        setSyncState("syncing");
+        pushTimer.current = setTimeout(() => {
+          pushRemote(completed).then((ok) => setSyncState(ok ? "ok" : "error"));
+        }, 600);
+      }, [completed, loaded]);
+
+      useEffect(() => {
+        if (!CONFIG.SYNC_URL) return;
+        const onVisible = () => {
+          if (document.visibilityState !== "visible") return;
+          setSyncState("syncing");
+          fetchRemote().then((remote) => {
+            if (remote) {
+              setCompleted((prev) => {
+                const merged = mergeStates(prev, remote);
+                try { localStorage.setItem(LOCAL_KEY, JSON.stringify(merged)); } catch {}
+                return merged;
+              });
+              setSyncState("ok");
+            } else setSyncState("error");
+          });
+        };
+        document.addEventListener("visibilitychange", onVisible);
+        window.addEventListener("focus", onVisible);
+        return () => {
+          document.removeEventListener("visibilitychange", onVisible);
+          window.removeEventListener("focus", onVisible);
+        };
+      }, []);
+
+      useEffect(() => {
+        const id = setInterval(() => setNow(new Date()), 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      const streak = useMemo(() => calcStreak(completed), [completed]);
+      const totalDays = useMemo(() => calcTotalDays(completed), [completed]);
+      const todayKey = dateKey(new Date());
+      const doneToday = !!completed[todayKey];
+      const thisWeekCount = useMemo(() => countInWindow(completed, startOfDay(new Date())), [completed, now.toDateString()]);
+
+      const diffMs = Math.max(0, GOAL_DATE - now);
+      const totalHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diffMs % (1000 * 60)) / 1000);
+      const days = Math.floor(totalHours / 24);
+      const totalHomeworkHours = ((totalDays * DAILY_MINUTES) / 60).toFixed(1);
+
+      const toggleToday = () => {
+        const wasDone = !!completed[todayKey];
+        const next = { ...completed, [todayKey]: !wasDone };
+        setCompleted(next);
+        if (!wasDone) {
+          const newStreak = calcStreak(next);
+          if (newStreak === 5) setCelebrate("five");
+          else if (newStreak === 20) setCelebrate("twenty");
+          else if (newStreak === 60) setCelebrate("sixty");
+          else setCelebrate("done");
+          setTimeout(() => setCelebrate(null), 3200);
+        }
+      };
+
+      const milestones = [
+        { id: "five", label: "5-DAY STREAK", prize: "Choose: extra screen time + extra sweet + free chore day", Comp: Icon.Star, reached: streak >= 5 },
+        { id: "twenty", label: "20-DAY STREAK", prize: "Double pocket money + free chore day", Comp: Icon.Trophy, reached: streak >= 20 },
+        { id: "sixty", label: "60-DAY STREAK", prize: "Outing of your choice — up to €100", Comp: Icon.Flame, reached: streak >= 60 },
+        { id: "ultimate", label: "GOAL: 31 MAR 2027", prize: "Gift of your choice", Comp: Icon.Crown, reached: diffMs === 0 },
+      ];
+
+      const monthDays = useMemo(() => {
+        const first = new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 1);
+        const last = new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 0);
+        const startWeekday = (first.getDay() + 6) % 7;
+        const cells = [];
+        for (let i = 0; i < startWeekday; i++) cells.push(null);
+        for (let d = 1; d <= last.getDate(); d++) {
+          cells.push(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), d));
+        }
+        return cells;
+      }, [viewMonth]);
+
+      const monthName = viewMonth.toLocaleString("default", { month: "long", year: "numeric" });
+
+      const weekDays = useMemo(() => {
+        const today = startOfDay(new Date());
+        const dow = (today.getDay() + 6) % 7;
+        const monday = new Date(today);
+        monday.setDate(today.getDate() - dow);
+        return Array.from({ length: 7 }, (_, i) => {
+          const d = new Date(monday);
+          d.setDate(monday.getDate() + i);
+          return d;
+        });
+      }, [now.toDateString()]);
+
+      const weekLabels = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
+
+      const wrap = {
+        minHeight: "100vh",
+        background: "#0a0a0a",
+        color: "#fff",
+        fontFamily: "'Archivo Black', 'Impact', sans-serif",
+        padding: "20px 16px 40px",
+        backgroundImage: "radial-gradient(circle at 20% 10%, rgba(220,38,38,0.15), transparent 50%), radial-gradient(circle at 80% 90%, rgba(220,38,38,0.1), transparent 50%)",
+      };
+
+      const syncBadge = {
+        idle: { text: "", color: "#666" },
+        off: { text: "LOCAL ONLY", color: "#666" },
+        syncing: { text: "SYNCING…", color: "#999" },
+        ok: { text: "SYNCED ✓", color: "#22c55e" },
+        error: { text: "OFFLINE", color: "#f59e0b" },
+      }[syncState];
+
+      return (
+        <div style={wrap}>
+          {celebrate && (
+            <div style={{
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.94)", zIndex: 100,
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              textAlign: "center", padding: 20,
+            }}>
+              <div className="pop" style={{ fontSize: 80 }}>
+                {celebrate === "five" && "⭐"}
+                {celebrate === "twenty" && "🏆"}
+                {celebrate === "sixty" && "🔥"}
+                {celebrate === "done" && "✅"}
+              </div>
+              <div className="pop" style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 52, color: "#dc2626", letterSpacing: 2, lineHeight: 1, marginTop: 8 }}>
+                {celebrate === "five" && "5 DAY STREAK!"}
+                {celebrate === "twenty" && "20 DAYS! HUGE!"}
+                {celebrate === "sixty" && "60 DAYS! LEGEND!"}
+                {celebrate === "done" && "NICE WORK!"}
+              </div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontWeight: 700, marginTop: 14, fontSize: 16, opacity: 0.9, maxWidth: 320, lineHeight: 1.4 }}>
+                {celebrate === "five" && "🎁 Pick: extra screen time + extra sweet + free chore day"}
+                {celebrate === "twenty" && "🎁 Double pocket money + free chore day"}
+                {celebrate === "sixty" && "🎁 Outing of your choice up to €100"}
+                {celebrate === "done" && "Homework logged for today"}
+              </div>
+            </div>
+          )}
+
+          <div style={{ maxWidth: 480, margin: "0 auto" }}>
+
+            <div style={{ textAlign: "center", marginBottom: 18 }}>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, letterSpacing: 4, opacity: 0.6, fontWeight: 800 }}>
+                RYDER'S MISSION
+              </div>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 44, lineHeight: 0.95, marginTop: 4, letterSpacing: 1 }}>
+                DYSLEXIA<br/>
+                <span style={{ color: "#dc2626" }}>HOMEWORK</span>
+              </div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 12, opacity: 0.5, marginTop: 6, fontWeight: 600 }}>
+                20 MINS · 5 DAYS A WEEK · UNTIL 31 MAR 2027
+              </div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, letterSpacing: 2, marginTop: 8, color: syncBadge.color, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                {syncState === "syncing" && <span className="spinner" />}
+                {syncBadge.text}
+              </div>
+            </div>
+
+            <div style={{
+              background: "#fff", color: "#0a0a0a", padding: "20px 18px", borderRadius: 4,
+              marginBottom: 16, border: "3px solid #dc2626", boxShadow: "6px 6px 0 #dc2626",
+            }}>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, letterSpacing: 3, fontWeight: 800, color: "#dc2626" }}>
+                ⏱ COUNTDOWN TO GOAL
+              </div>
+              <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 56, lineHeight: 1, marginTop: 4, letterSpacing: 1 }}>
+                {totalHours.toLocaleString()}<span style={{ fontSize: 22, color: "#dc2626" }}> HRS</span>
+              </div>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 13, fontWeight: 600, color: "#666", marginTop: 2 }}>
+                {days} days · {minutes}m {seconds}s remaining
+              </div>
+            </div>
+
+            <button
+              onClick={toggleToday}
+              style={{
+                width: "100%", padding: "22px 16px",
+                background: doneToday ? "#0a0a0a" : "#dc2626",
+                color: "#fff",
+                border: doneToday ? "3px solid #dc2626" : "3px solid #fff",
+                borderRadius: 4,
+                fontFamily: "'Bebas Neue', sans-serif", fontSize: 28, letterSpacing: 2,
+                cursor: "pointer", marginBottom: 20,
+                boxShadow: "6px 6px 0 rgba(220,38,38,0.5)", transition: "transform 0.1s",
+              }}
+            >
+              {doneToday ? (
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+                  <Icon.Check size={28} /> DONE TODAY
+                </span>
+              ) : (<>I DID MY 20 MINS ✓</>)}
+            </button>
+
+            <div style={{
+              background: "#dc2626", color: "#fff", padding: 20, borderRadius: 4,
+              marginBottom: 16, display: "flex", alignItems: "center", gap: 16,
+              border: "3px solid #fff", boxShadow: "6px 6px 0 #fff",
+            }}>
+              <Icon.Flame size={56} fill="#fff" className={streak > 0 ? "flame-anim" : ""} />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, letterSpacing: 3, fontWeight: 800, opacity: 0.9 }}>
+                  CURRENT STREAK
+                </div>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 64, lineHeight: 0.9, letterSpacing: 1 }}>
+                  {streak}<span style={{ fontSize: 22, opacity: 0.8 }}> DAYS</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{
+              background: "#1a1a1a", border: "2px solid #333", borderRadius: 4,
+              padding: "12px 14px", marginBottom: 16,
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <div>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, letterSpacing: 2, fontWeight: 800, opacity: 0.6 }}>
+                  LAST 7 DAYS
+                </div>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, letterSpacing: 1, marginTop: 2 }}>
+                  {thisWeekCount} / 5 <span style={{ fontSize: 12, opacity: 0.6 }}>NEEDED</span>
+                </div>
+              </div>
+              <div style={{
+                fontFamily: "'Bebas Neue', sans-serif", fontSize: 14, letterSpacing: 1,
+                padding: "6px 10px", borderRadius: 2,
+                background: thisWeekCount >= 5 ? "#dc2626" : "#333", color: "#fff",
+              }}>
+                {thisWeekCount >= 5 ? "STREAK SAFE ✓" : `${5 - thisWeekCount} TO GO`}
+              </div>
+            </div>
+
+            <div style={{
+              background: "#fff", color: "#0a0a0a", padding: 16, borderRadius: 4,
+              marginBottom: 16, border: "3px solid #0a0a0a",
+            }}>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, letterSpacing: 3, fontWeight: 800, color: "#dc2626", marginBottom: 10 }}>
+                ◆ THIS WEEK
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
+                {weekDays.map((d, i) => {
+                  const k = dateKey(d);
+                  const isDone = !!completed[k];
+                  const isToday = k === todayKey;
+                  const isFuture = d > new Date();
+                  return (
+                    <div key={k} style={{ textAlign: "center" }}>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, fontWeight: 800, color: "#666", marginBottom: 4 }}>
+                        {weekLabels[i]}
+                      </div>
+                      <div style={{
+                        aspectRatio: "1/1",
+                        background: isDone ? "#dc2626" : isFuture ? "#f0f0f0" : "#fff",
+                        border: isToday ? "3px solid #0a0a0a" : "2px solid #e5e5e5",
+                        borderRadius: 4,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        fontFamily: "'Bebas Neue', sans-serif", fontSize: 16,
+                        color: isDone ? "#fff" : isFuture ? "#ccc" : "#0a0a0a",
+                      }}>
+                        {isDone ? <Icon.Check size={18} /> : d.getDate()}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 10, letterSpacing: 3, fontWeight: 800, color: "#fff", marginBottom: 10, opacity: 0.7 }}>
+                ★ LOCKED-IN PRIZES
+              </div>
+              {milestones.map((m) => {
+                const C = m.Comp;
+                return (
+                  <div key={m.id} style={{
+                    background: m.reached ? "#dc2626" : "#1a1a1a",
+                    border: m.reached ? "3px solid #fff" : "2px solid #333",
+                    borderRadius: 4, padding: "14px 16px", marginBottom: 8,
+                    display: "flex", alignItems: "center", gap: 14,
+                  }}>
+                    <div style={{
+                      width: 48, height: 48,
+                      background: m.reached ? "#fff" : "#0a0a0a",
+                      color: m.reached ? "#dc2626" : "#666",
+                      borderRadius: 4,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      flexShrink: 0,
+                    }}>
+                      <C size={26} fill={m.reached ? "#dc2626" : "none"} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 20, letterSpacing: 1, lineHeight: 1 }}>
+                        {m.label}
+                      </div>
+                      <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 11, fontWeight: 700, opacity: 0.9, marginTop: 4, lineHeight: 1.35 }}>
+                        🎁 {m.prize}
+                      </div>
+                    </div>
+                    {m.reached && (
+                      <div style={{
+                        background: "#fff", color: "#dc2626",
+                        padding: "4px 8px", borderRadius: 2,
+                        fontFamily: "'Bebas Neue', sans-serif", fontSize: 12, letterSpacing: 1, flexShrink: 0,
+                      }}>
+                        UNLOCKED
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{
+              background: "#fff", color: "#0a0a0a", padding: 16, borderRadius: 4,
+              marginBottom: 16, border: "3px solid #0a0a0a",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <button
+                  onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() - 1, 1))}
+                  style={{ background: "#0a0a0a", color: "#fff", border: "none", padding: "6px 12px", fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, cursor: "pointer", borderRadius: 2 }}
+                >‹</button>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 22, letterSpacing: 1 }}>
+                  {monthName.toUpperCase()}
+                </div>
+                <button
+                  onClick={() => setViewMonth(new Date(viewMonth.getFullYear(), viewMonth.getMonth() + 1, 1))}
+                  style={{ background: "#0a0a0a", color: "#fff", border: "none", padding: "6px 12px", fontFamily: "'Bebas Neue', sans-serif", fontSize: 16, cursor: "pointer", borderRadius: 2 }}
+                >›</button>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3, marginBottom: 4 }}>
+                {weekLabels.map((l) => (
+                  <div key={l} style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, fontWeight: 800, color: "#999", textAlign: "center" }}>
+                    {l}
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 3 }}>
+                {monthDays.map((d, i) => {
+                  if (!d) return <div key={`e${i}`} />;
+                  const k = dateKey(d);
+                  const isDone = !!completed[k];
+                  const isToday = k === todayKey;
+                  const isFuture = d > new Date();
+                  return (
+                    <div key={k} style={{
+                      aspectRatio: "1/1",
+                      background: isDone ? "#dc2626" : isFuture ? "#fafafa" : "#fff",
+                      border: isToday ? "2px solid #0a0a0a" : "1px solid #eee",
+                      borderRadius: 3,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontFamily: "'Bebas Neue', sans-serif", fontSize: 14,
+                      color: isDone ? "#fff" : isFuture ? "#ccc" : "#0a0a0a",
+                    }}>
+                      {d.getDate()}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+              <div style={{ background: "#1a1a1a", border: "2px solid #333", padding: 14, borderRadius: 4 }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, letterSpacing: 2, fontWeight: 800, opacity: 0.6 }}>
+                  TOTAL DAYS
+                </div>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, color: "#dc2626", lineHeight: 1 }}>
+                  {totalDays}
+                </div>
+              </div>
+              <div style={{ background: "#1a1a1a", border: "2px solid #333", padding: 14, borderRadius: 4 }}>
+                <div style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, letterSpacing: 2, fontWeight: 800, opacity: 0.6 }}>
+                  HOURS DONE
+                </div>
+                <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 32, color: "#dc2626", lineHeight: 1 }}>
+                  {totalHomeworkHours}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ textAlign: "center", fontFamily: "'Inter', sans-serif", fontSize: 10, opacity: 0.4, letterSpacing: 2, fontWeight: 700 }}>
+              KEEP GOING RYDER · YOU GOT THIS
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
